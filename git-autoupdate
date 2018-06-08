@@ -24,6 +24,13 @@ if [ -z "$E_PATH" ]; then
   E_PATH=.
 fi
 
+if [ -d "$E_PATH/.git" ]; then
+  cd "$E_PATH"
+else
+  echo "ERROR: Source Tree Path '$E_PATH' is not a directory or is not controlled by Git!"
+  exit 1
+fi
+
 # If the state file is not defined, then set the default of ~/.state_git_remote
 if [ -z "$E_STATE_FILE" ]; then
   E_STATE_FILE="$HOME/.state_git_remote"
@@ -72,14 +79,14 @@ if [ -d '.git' ] ; then
   fi
 fi
 
+# Create the temporary file path and set the trap to remove it later.
+umask 0177
+tmpfile="/tmp/$(basename "$0")"."$$"."$(awk 'BEGIN {srand();printf "%d\n", rand() * 10^10}')"
+trap 'rm -f -- "$tmpfile"' INT TERM HUP EXIT
+
 exitcode=0
 if [ -n "$SERVER_NAME" ]; then
   if getent hosts "$SERVER_NAME" >/dev/null 2>&1 ; then
-
-    # Create the temporary file path and set the trap to remove it later.
-    umask 0177
-    tmpfile="/tmp/$(basename "$0")"."$$"."$(awk 'BEGIN {srand();printf "%d\n", rand() * 10^10}')"
-    trap 'rm -f -- "$tmpfile"' INT TERM HUP EXIT
 
     if ping -c 1 "$SERVER_NAME" >"$tmpfile" 2>&1 ; then
       if [ -n "$UPSTREAM_NO_PATH" ]; then
