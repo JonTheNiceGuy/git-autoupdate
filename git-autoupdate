@@ -1,0 +1,137 @@
+#!/bin/bash
+renderhelp() {
+  echo "$0 - Check response of your git remote"
+  echo ""
+  echo "-t <statefile> - where to place the statefile                        - default ~/.state_git_remote"
+  echo "-r <number>    - after how many checks to re-report upstream failure - default 30"
+  echo "-e <action>    - script to execute once the update is done           - default <none>"
+  echo "-s <path>      - location of the source tree to update               - default \$PWD"
+  exit 255
+}
+
+while getopts e:hr:s:t: OPTION
+do
+  case "$OPTION" in
+    h) renderhelp;;
+    t) E_STATE_FILE="$OPTARG";;
+    r) E_UPSTREAM_REPEAT="$OPTARG";;
+    e) E_ACTION="$OPTARG";;
+    s) E_PATH="$OPTARG";;
+  esac
+done
+
+if [ -z "$E_PATH" ]; then
+  E_PATH=.
+fi
+
+# If the state file is not defined, then set the default of ~/.state_git_remote
+if [ -z "$E_STATE_FILE" ]; then
+  E_STATE_FILE="$HOME/.state_git_remote"
+fi
+
+# If the state file exists, load it, otherwise, set defaults
+if [ -e "$E_STATE_FILE" ]; then
+  source "$E_STATE_FILE"
+else
+  UPSTREAM_REPEAT=30
+fi
+
+if [ -n "$E_UPSTREAM_REPEAT" ]; then
+  UPSTREAM_REPEAT=$E_UPSTREAM_REPEAT
+fi
+
+# Check that the git directory exists
+if [ -d '.git' ] ; then
+  # Parse the config of the git repo
+  THIS_BRANCH="$(git branch | egrep '^\*' | cut -d\  -f2)"
+  THIS_REMOTE="$(git config --get branch.$THIS_BRANCH.remote)"
+  REMOTE_PATH="$(git config --get remote.$THIS_REMOTE.url)"
+  REMOTE_BRANCH="$(git for-each-ref --format='%(upstream:short)' $(git symbolic-ref -q HEAD))"
+
+  # Work out what kind of git remote path we're working with
+  if [ -z "$REMOTE_PATH" ]; then
+    if [ -z "$UPSTREAM_NO_PATH" ]; then
+      echo "WARNING: No upstream path - has the branch changed, or the repo not been cloned?"
+      echo "This will only be sent once until this condition has cleared."
+      UPSTREAM_NO_PATH=1
+    fi
+  elif echo "$REMOTE_PATH" | egrep "^http[s]*://[a-zA-Z0-9\-\_\.]+@" >/dev/null 2>&1 ; then
+    SERVER_NAME="$(echo "$REMOTE_PATH" | sed -E 's/http[s]*:\/\/[^@]+@([^\/]+)\/.*$/\1/g')"
+  elif echo "$REMOTE_PATH" | egrep "^http" >/dev/null 2>&1 ; then
+    SERVER_NAME="$(echo "$REMOTE_PATH" | sed -E 's/http[s]*:\/\/([^\/]+)\/.*$/\1/g')"
+  elif echo "$REMOTE_PATH" | egrep '^[^@]+@([^:]+)[:]+' >/dev/null 2>&1 ; then
+    SERVER_NAME="$(echo "$REMOTE_PATH" | sed -E 's/^[^@]+@([^:]+)[:]+.*$/\1/g')"
+  elif echo "$REMOTE_PATH" | egrep "^[^:]+[:]+" >/dev/null 2>&1 ; then
+    SERVER_NAME="$(echo "$REMOTE_PATH" | sed -E 's/^([^:]+)[:]+.*$/\1/g')"
+  else
+    if [ -z "$UPSTREAM_LOCAL_PATH" ]; then
+      echo "WARNING: Upstream path appears to be local to this device - has the branch changed, or the repo not been cloned?"
+      echo "This will only be sent once until this condition has cleared."
+      UPSTREAM_LOCAL_PATH=1
+    fi
+  fi
+fi
+
+if [ -n "$SERVER_NAME" ] && getent hosts "$SERVER_NAME" >/dev/null 2>&1 ; then
+
+  # Create the temporary file path and set the trap to remove it later.
+  umask 0177
+  tmpfile="/tmp/$(basename "$0")"."$$"."$(awk 'BEGIN {srand();printf "%d\n", rand() * 10^10}')"
+  trap 'rm -f -- "$tmpfile"' INT TERM HUP EXIT
+
+  if ping -c 1 "$SERVER_NAME" >"$tmpfile" 2>&1 ; then
+    if [ -n "$UPSTREAM_NO_PATH" ]; then
+      UPSTREAM_NO_PATH=""
+      echo "INFO: Upstream path restored"
+    fi
+    if [ -n "$UPSTREAM_LOCAL_PATH" ]; then
+      UPSTREAM_LOCAL_PATH=""
+      echo "INFO: Upstream path restored"
+    fi
+    if [ -n "$UPSTREAM_NO_RESPONSE" ]; then
+      UPSTREAM_NO_RESPONSE=0
+    fi
+    exitcode=0
+  else
+    if [ -z "UPSTREAM_NO_RESPONSE" ]; then
+      UPSTREAM_NO_RESPONSE=0
+    fi
+    ((UPSTREAM_NO_RESPONSE++))
+    if [ $UPSTREAM_NO_RESPONSE -eq $UPSTREAM_REPEAT ]; then
+      UPSTREAM_NO_RESPONSE=""
+      echo "WARNING: Upstream ($SERVER_NAME) is not responding to a ping."
+      echo ""
+      cat "$tmpfile"
+    fi
+    exitcode=1
+  fi
+elif [ -n "$SERVER_NAME" ]; then
+  # There's no server name to try to match. We should be OK
+else
+  if [ -z "$UPSTREAM_NO_RESPONSE" ]; then
+    UPSTREAM_NO_RESPONSE=0
+  fi
+  ((UPSTREAM_NO_RESPONSE++))
+  if [ $UPSTREAM_NO_RESPONSE -eq $UPSTREAM_REPEAT ]; then
+    UPSTREAM_NO_RESPONSE=""
+    echo "WARNING: Upstream ($SERVER_NAME) is not resolving the DNS name."
+  fi
+  exitcode=1
+fi
+echo "UPSTREAM_NO_RESPONSE=$UPSTREAM_NO_RESPONSE" > "$E_STATE_FILE"
+echo "UPSTREAM_NO_PATH=$UPSTREAM_NO_PATH" >> "$E_STATE_FILE"
+echo "UPSTREAM_LOCAL_PATH=$UPSTREAM_LOCAL_PATH" >> "$E_STATE_FILE"
+echo "UPSTREAM_REPEAT=$UPSTREAM_REPEAT" >> "$E_STATE_FILE"
+
+if [ $exitcode -gt 0 ]; then
+  exit $exitcode
+fi
+
+git fetch $THIS_REMOTE
+reslog="$(git log HEAD..$REMOTE_BRANCH --oneline)"
+if [ -n "${reslog}" ] ; then
+  git merge $REMOTE_BRANCH
+  if [ -n "$E_ACTION" ]; then
+    $E_ACTION
+  fi
+fi
