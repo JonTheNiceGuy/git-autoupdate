@@ -72,26 +72,41 @@ if [ -d '.git' ] ; then
   fi
 fi
 
-if [ -n "$SERVER_NAME" ] && getent hosts "$SERVER_NAME" >/dev/null 2>&1 ; then
+exitcode=0
+if [ -n "$SERVER_NAME" ]; then
+  if getent hosts "$SERVER_NAME" >/dev/null 2>&1 ; then
 
-  # Create the temporary file path and set the trap to remove it later.
-  umask 0177
-  tmpfile="/tmp/$(basename "$0")"."$$"."$(awk 'BEGIN {srand();printf "%d\n", rand() * 10^10}')"
-  trap 'rm -f -- "$tmpfile"' INT TERM HUP EXIT
+    # Create the temporary file path and set the trap to remove it later.
+    umask 0177
+    tmpfile="/tmp/$(basename "$0")"."$$"."$(awk 'BEGIN {srand();printf "%d\n", rand() * 10^10}')"
+    trap 'rm -f -- "$tmpfile"' INT TERM HUP EXIT
 
-  if ping -c 1 "$SERVER_NAME" >"$tmpfile" 2>&1 ; then
-    if [ -n "$UPSTREAM_NO_PATH" ]; then
-      UPSTREAM_NO_PATH=""
-      echo "INFO: Upstream path restored"
+    if ping -c 1 "$SERVER_NAME" >"$tmpfile" 2>&1 ; then
+      if [ -n "$UPSTREAM_NO_PATH" ]; then
+        UPSTREAM_NO_PATH=""
+        echo "INFO: Upstream path restored"
+      fi
+      if [ -n "$UPSTREAM_LOCAL_PATH" ]; then
+        UPSTREAM_LOCAL_PATH=""
+        echo "INFO: Upstream path restored"
+      fi
+      if [ -n "$UPSTREAM_NO_RESPONSE" ]; then
+        UPSTREAM_NO_RESPONSE=0
+      fi
+      exitcode=0
+    else
+      if [ -z "UPSTREAM_NO_RESPONSE" ]; then
+        UPSTREAM_NO_RESPONSE=0
+      fi
+      ((UPSTREAM_NO_RESPONSE++))
+      if [ $UPSTREAM_NO_RESPONSE -eq $UPSTREAM_REPEAT ]; then
+        UPSTREAM_NO_RESPONSE=""
+        echo "WARNING: Upstream ($SERVER_NAME) is not responding to a ping."
+        echo ""
+        cat "$tmpfile"
+      fi
+      exitcode=1
     fi
-    if [ -n "$UPSTREAM_LOCAL_PATH" ]; then
-      UPSTREAM_LOCAL_PATH=""
-      echo "INFO: Upstream path restored"
-    fi
-    if [ -n "$UPSTREAM_NO_RESPONSE" ]; then
-      UPSTREAM_NO_RESPONSE=0
-    fi
-    exitcode=0
   else
     if [ -z "UPSTREAM_NO_RESPONSE" ]; then
       UPSTREAM_NO_RESPONSE=0
@@ -99,24 +114,10 @@ if [ -n "$SERVER_NAME" ] && getent hosts "$SERVER_NAME" >/dev/null 2>&1 ; then
     ((UPSTREAM_NO_RESPONSE++))
     if [ $UPSTREAM_NO_RESPONSE -eq $UPSTREAM_REPEAT ]; then
       UPSTREAM_NO_RESPONSE=""
-      echo "WARNING: Upstream ($SERVER_NAME) is not responding to a ping."
-      echo ""
-      cat "$tmpfile"
+      echo "WARNING: Upstream ($SERVER_NAME) is not resolving the DNS name."
     fi
     exitcode=1
   fi
-elif [ -n "$SERVER_NAME" ]; then
-  # There's no server name to try to match. We should be OK
-else
-  if [ -z "$UPSTREAM_NO_RESPONSE" ]; then
-    UPSTREAM_NO_RESPONSE=0
-  fi
-  ((UPSTREAM_NO_RESPONSE++))
-  if [ $UPSTREAM_NO_RESPONSE -eq $UPSTREAM_REPEAT ]; then
-    UPSTREAM_NO_RESPONSE=""
-    echo "WARNING: Upstream ($SERVER_NAME) is not resolving the DNS name."
-  fi
-  exitcode=1
 fi
 echo "UPSTREAM_NO_RESPONSE=$UPSTREAM_NO_RESPONSE" > "$E_STATE_FILE"
 echo "UPSTREAM_NO_PATH=$UPSTREAM_NO_PATH" >> "$E_STATE_FILE"
