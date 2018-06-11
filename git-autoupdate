@@ -80,9 +80,11 @@ if [ -d '.git' ] ; then
 fi
 
 # Create the temporary file path and set the trap to remove it later.
+srcumask=$(umask)
 umask 0177
 tmpfile="/tmp/$(basename "$0")"."$$"."$(awk 'BEGIN {srand();printf "%d\n", rand() * 10^10}')"
 trap 'rm -f -- "$tmpfile"' INT TERM HUP EXIT
+umask $srcumask
 
 exitcode=0
 if [ -n "$SERVER_NAME" ]; then
