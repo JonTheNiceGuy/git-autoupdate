@@ -91,18 +91,32 @@ if [ -n "$SERVER_NAME" ]; then
   if getent hosts "$SERVER_NAME" >/dev/null 2>&1 ; then
 
     if ping -c 1 "$SERVER_NAME" >"$tmpfile" 2>&1 ; then
-      if [ -n "$UPSTREAM_NO_PATH" ]; then
-        UPSTREAM_NO_PATH=""
-        echo "INFO: Upstream path restored"
+      if git fetch $THIS_REMOTE >"$tmpfile" 2>&1 ; then
+        if [ -n "$UPSTREAM_NO_PATH" ]; then
+          UPSTREAM_NO_PATH=""
+          echo "INFO: Upstream path restored"
+        fi
+        if [ -n "$UPSTREAM_LOCAL_PATH" ]; then
+          UPSTREAM_LOCAL_PATH=""
+          echo "INFO: Upstream path restored"
+        fi
+        if [ -n "$UPSTREAM_NO_RESPONSE" ]; then
+          UPSTREAM_NO_RESPONSE=0
+        fi
+        exitcode=0
+      else
+        if [ -z "UPSTREAM_NO_RESPONSE" ]; then
+          UPSTREAM_NO_RESPONSE=0
+        fi
+        ((UPSTREAM_NO_RESPONSE++))
+        if [ $UPSTREAM_NO_RESPONSE -eq $UPSTREAM_REPEAT ]; then
+          UPSTREAM_NO_RESPONSE=""
+          echo "WARNING: Upstream ($SERVER_NAME) is not responding to a git fetch."
+          echo ""
+          cat "$tmpfile"
+        fi
+        exitcode=1
       fi
-      if [ -n "$UPSTREAM_LOCAL_PATH" ]; then
-        UPSTREAM_LOCAL_PATH=""
-        echo "INFO: Upstream path restored"
-      fi
-      if [ -n "$UPSTREAM_NO_RESPONSE" ]; then
-        UPSTREAM_NO_RESPONSE=0
-      fi
-      exitcode=0
     else
       if [ -z "UPSTREAM_NO_RESPONSE" ]; then
         UPSTREAM_NO_RESPONSE=0
@@ -137,7 +151,6 @@ if [ $exitcode -gt 0 ]; then
   exit $exitcode
 fi
 
-git fetch $THIS_REMOTE
 reslog="$(git log HEAD..$REMOTE_BRANCH --oneline)"
 if [ -n "${reslog}" ] ; then
   git merge $REMOTE_BRANCH
